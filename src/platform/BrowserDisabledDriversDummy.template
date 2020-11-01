@@ -90,3 +90,24 @@ export class SqliteDriver {}
  * This is a dummy class for replacement via `package.json` in browser builds
  */
 export class BetterSqlite3Driver {}
+/**
+ * DO NOT IMPORT THIS CLASS -
+ * This is a dummy class for replacement via `package.json` in browser builds
+ */
+export class ExpoDriver {}
+/**
+ * DO NOT IMPORT THIS CLASS -
+ * This is a dummy class for replacement via `package.json` in browser builds
+ */
+export class CordovaDriver {}
+/**
+ * DO NOT IMPORT THIS CLASS -
+ * This is a dummy class for replacement via `package.json` in browser builds
+ */
+export class ReactNativeDriver {}
+/**
+ * DO NOT IMPORT THIS CLASS -
+ * This is a dummy class for replacement via `package.json` in browser builds
+ */
+export class SqljsDriver {}
+

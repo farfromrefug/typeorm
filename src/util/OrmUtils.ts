@@ -78,6 +78,8 @@ export class OrmUtils {
                     continue;
 
                 if (this.isObject(value)
+                && (typeof value.getClass !== "function") // Nativescript android native object fix
+                && (typeof value.class !== "function") // Nativescript ios native object fix
                 && !(value instanceof Map)
                 && !(value instanceof Set)
                 && !(value instanceof Date)
