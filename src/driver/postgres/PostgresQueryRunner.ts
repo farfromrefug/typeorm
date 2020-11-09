@@ -22,6 +22,7 @@ import {Query} from "../Query";
 import {IsolationLevel} from "../types/IsolationLevel";
 import {PostgresDriver} from "./PostgresDriver";
 import {ReplicationMode} from "../types/ReplicationMode";
+import {BroadcasterResult} from "../../subscriber/BroadcasterResult";
 
 /**
  * Runs queries on a single postgres database connection.
@@ -138,11 +139,19 @@ export class PostgresQueryRunner extends BaseQueryRunner implements QueryRunner 
         if (this.isTransactionActive)
             throw new TransactionAlreadyStartedError();
 
+        const beforeBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastBeforeTransactionStartEvent(beforeBroadcastResult);
+        if (beforeBroadcastResult.promises.length > 0) await Promise.all(beforeBroadcastResult.promises);
+
         this.isTransactionActive = true;
         await this.query("START TRANSACTION");
         if (isolationLevel) {
             await this.query("SET TRANSACTION ISOLATION LEVEL " + isolationLevel);
         }
+
+        const afterBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastAfterTransactionStartEvent(afterBroadcastResult);
+        if (afterBroadcastResult.promises.length > 0) await Promise.all(afterBroadcastResult.promises);
     }
 
     /**
@@ -153,8 +162,16 @@ export class PostgresQueryRunner extends BaseQueryRunner implements QueryRunner 
         if (!this.isTransactionActive)
             throw new TransactionNotStartedError();
 
+        const beforeBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastBeforeTransactionCommitEvent(beforeBroadcastResult);
+        if (beforeBroadcastResult.promises.length > 0) await Promise.all(beforeBroadcastResult.promises);
+
         await this.query("COMMIT");
         this.isTransactionActive = false;
+
+        const afterBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastAfterTransactionCommitEvent(afterBroadcastResult);
+        if (afterBroadcastResult.promises.length > 0) await Promise.all(afterBroadcastResult.promises);
     }
 
     /**
@@ -165,51 +182,51 @@ export class PostgresQueryRunner extends BaseQueryRunner implements QueryRunner 
         if (!this.isTransactionActive)
             throw new TransactionNotStartedError();
 
+        const beforeBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastBeforeTransactionRollbackEvent(beforeBroadcastResult);
+        if (beforeBroadcastResult.promises.length > 0) await Promise.all(beforeBroadcastResult.promises);
+
         await this.query("ROLLBACK");
         this.isTransactionActive = false;
+
+        const afterBroadcastResult = new BroadcasterResult();
+        this.broadcaster.broadcastAfterTransactionRollbackEvent(afterBroadcastResult);
+        if (afterBroadcastResult.promises.length > 0) await Promise.all(afterBroadcastResult.promises);
     }
 
     /**
      * Executes a given SQL query.
      */
-    query(query: string, parameters?: any[]): Promise<any> {
+    async query(query: string, parameters?: any[]): Promise<any> {
         if (this.isReleased)
             throw new QueryRunnerAlreadyReleasedError();
 
-        return new Promise<any[]>(async (ok, fail) => {
-            try {
-                const databaseConnection = await this.connect();
-                this.driver.connection.logger.logQuery(query, parameters, this);
-                const queryStartTime = +new Date();
+        const databaseConnection = await this.connect();
 
-                databaseConnection.query(query, parameters, (err: any, result: any) => {
-                    // log slow queries if maxQueryExecution time is set
-                    const maxQueryExecutionTime = this.driver.connection.options.maxQueryExecutionTime;
-                    const queryEndTime = +new Date();
-                    const queryExecutionTime = queryEndTime - queryStartTime;
-                    if (maxQueryExecutionTime && queryExecutionTime > maxQueryExecutionTime)
-                        this.driver.connection.logger.logQuerySlow(queryExecutionTime, query, parameters, this);
+        this.driver.connection.logger.logQuery(query, parameters, this);
+        try {
+            const queryStartTime = +new Date();
+            const result = await databaseConnection.query(query, parameters);
+            // log slow queries if maxQueryExecution time is set
+            const maxQueryExecutionTime = this.driver.connection.options.maxQueryExecutionTime;
+            const queryEndTime = +new Date();
+            const queryExecutionTime = queryEndTime - queryStartTime;
+            if (maxQueryExecutionTime && queryExecutionTime > maxQueryExecutionTime)
+                this.driver.connection.logger.logQuerySlow(queryExecutionTime, query, parameters, this);
 
-                    if (err) {
-                        this.driver.connection.logger.logQueryError(err, query, parameters, this);
-                        fail(new QueryFailedError(query, parameters, err));
-                    } else {
-                        switch (result.command) {
-                            case "DELETE":
-                            case "UPDATE":
-                                // for UPDATE and DELETE query additionally return number of affected rows
-                                ok([result.rows, result.rowCount]);
-                                break;
-                            default:
-                                ok(result.rows);
-                        }
-                    }
-                });
-
-            } catch (err) {
-                fail(err);
+            switch (result.command) {
+                case "DELETE":
+                case "UPDATE":
+                    // for UPDATE and DELETE query additionally return number of affected rows
+                    return [result.rows, result.rowCount];
+                    break;
+                default:
+                    return result.rows;
             }
-        });
+        } catch (err) {
+            this.driver.connection.logger.logQueryError(err, query, parameters, this);
+            throw new QueryFailedError(query, parameters, err);
+        }
     }
 
     /**
@@ -2087,7 +2104,7 @@ export class PostgresQueryRunner extends BaseQueryRunner implements QueryRunner 
      */
     protected escapeComment(comment?: string) {
         if (comment === undefined || comment.length === 0) {
-            return 'NULL';
+            return "NULL";
         }
 
         comment = comment
